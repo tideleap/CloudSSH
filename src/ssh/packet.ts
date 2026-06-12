@@ -55,6 +55,10 @@ export class SSHPacketParser {
   getSeqNum(): number {
     return this.seqNum;
   }
+
+  getBufferLength(): number {
+    return this.buffer.length;
+  }
 }
 
 export class SSHPacketBuilder {

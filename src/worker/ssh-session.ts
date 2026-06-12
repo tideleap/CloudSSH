@@ -76,9 +76,12 @@ export class SSHSession {
     try {
       while (true) {
         const { done, value } = await reader.read();
-        if (done) break;
+        if (done) {
+          console.log('TCP stream ended');
+          break;
+        }
 
-        console.log('Received data, state:', this.state, 'length:', value.length);
+        console.log('Received data, state:', this.state, 'length:', value.length, 'hex:', Array.from(value.slice(0, 20)).map(b => b.toString(16).padStart(2, '0')).join(' '));
 
         if (this.state === 'version') {
           const versionStr = decoder.decode(value);
@@ -89,7 +92,9 @@ export class SSHSession {
             await this.startKEX();
           }
         } else {
+          console.log('Feeding data to packet parser, buffer size before:', this.packetParser.getBufferLength());
           this.packetParser.feed(value);
+          console.log('Buffer size after:', this.packetParser.getBufferLength());
           await this.processPackets();
         }
       }
