@@ -99,16 +99,26 @@ export class SSHSession {
             await this.startKEX();
           }
         } else {
-          this.packetParser.feed(value);
-          await this.processPackets();
+          try {
+            this.packetParser.feed(value);
+            await this.processPackets();
+          } catch (pktError) {
+            const pktErrMsg = pktError instanceof Error ? pktError.message : String(pktError);
+            console.error('[SSH] Packet processing error:', pktErrMsg);
+            throw pktError;
+          }
         }
       }
     } catch (error) {
-      console.error('[SSH] Read loop error:', error);
-      this.ws.send(JSON.stringify({
-        type: 'error',
-        message: 'SSH 连接断开'
-      }));
+      const errMsg = error instanceof Error ? error.message : String(error);
+      const errStack = error instanceof Error ? error.stack : '';
+      console.error('[SSH] Read loop error:', errMsg, errStack);
+      try {
+        this.ws.send(JSON.stringify({
+          type: 'error',
+          message: 'SSH 连接断开: ' + errMsg
+        }));
+      } catch {}
     }
   }
 

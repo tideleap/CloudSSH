@@ -120,10 +120,9 @@ export class SSHSessionDO {
       console.log('[SSH] Handshake initiated');
 
     } catch (error) {
-      console.error('[SSH] Session error:', error);
-      const errMsg = error instanceof Error ? error.message : 'Unknown error';
+      const errMsg = error instanceof Error ? error.message : String(error);
       const errStack = error instanceof Error ? error.stack : '';
-      console.error('[SSH] Error stack:', errStack);
+      console.error('[SSH] Session error:', errMsg, errStack);
       ws.send(JSON.stringify({ type: 'error', message: `连接失败: ${errMsg}` }));
       ws.close(1011, 'SSH connection failed');
     }
