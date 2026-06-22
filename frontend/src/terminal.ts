@@ -2,7 +2,7 @@ import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import { WebLinksAddon } from '@xterm/addon-web-links';
 import { WebglAddon } from '@xterm/addon-webgl';
-import { ZmodemHandler } from './zmodem-handler';
+import { TrzszFilter } from 'trzsz';
 import '@xterm/xterm/css/xterm.css';
 
 export interface SSHConnectionConfig {
@@ -46,6 +46,7 @@ export class SSHTerminal {
   private container: HTMLElement;
   private disposables: { dispose(): void }[] = [];
   private heartbeatInterval: ReturnType<typeof setInterval> | null = null;
+  private trzszFilter: TrzszFilter | null = null;
   private reconnectAttempts: number = 0;
   private maxReconnectAttempts: number = 5;
   private reconnectTimeout: ReturnType<typeof setTimeout> | null = null;
@@ -80,6 +81,21 @@ export class SSHTerminal {
         }
       } catch (err) {
         console.error('Failed to read clipboard', err);
+      }
+    });
+
+    // Drag-and-drop file upload support (trzsz)
+    this.container.addEventListener('dragover', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+    });
+    this.container.addEventListener('drop', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      if (this.trzszFilter && e.dataTransfer?.items) {
+        this.trzszFilter.uploadFiles(e.dataTransfer.items)
+          .then(() => console.log('[trzsz] Drag-drop upload success'))
+          .catch((err: any) => console.error('[trzsz] Drag-drop upload error:', err));
       }
     });
   }
@@ -177,15 +193,25 @@ export class SSHTerminal {
   private setupWebSocketHandlers(rejectFn?: (reason?: any) => void): void {
     if (!this.ws) return;
 
-    // Zmodem support
-    const zmodemHandler = new ZmodemHandler(
-      (data) => this.terminal.write(data),
-      (data) => {
+    // Trzsz file transfer support
+    this.trzszFilter = new TrzszFilter({
+      writeToTerminal: (data: string | ArrayBuffer | Uint8Array | Blob) => {
+        if (typeof data === 'string') {
+          this.terminal.write(data);
+        } else if (data instanceof Uint8Array) {
+          this.terminal.write(data);
+        } else if (data instanceof ArrayBuffer) {
+          this.terminal.write(new Uint8Array(data));
+        }
+        // Blob is not expected in practice for terminal output
+      },
+      sendToServer: (data: string | Uint8Array) => {
         if (this.ws?.readyState === WebSocket.OPEN) {
           this.ws.send(data);
         }
-      }
-    );
+      },
+      terminalColumns: this.terminal.cols,
+    });
 
     this.ws.onmessage = (event) => {
       if (typeof event.data === 'string') {
@@ -203,16 +229,16 @@ export class SSHTerminal {
             case 'error':
               this.terminal.writeln(`\x1b[31m[!] ${msg.message}\x1b[0m`);
               break;
+            case 'pong':
+              break;
           }
         } catch {
-          this.terminal.write(event.data);
+          // Non-JSON string data — pass through trzsz filter
+          this.trzszFilter!.processServerOutput(event.data);
         }
       } else {
-        const reader = new FileReader();
-        reader.onload = () => {
-          zmodemHandler.consume(reader.result as ArrayBuffer);
-        };
-        reader.readAsArrayBuffer(event.data);
+        // Binary data — pass through trzsz filter
+        this.trzszFilter!.processServerOutput(event.data);
       }
     };
 
@@ -236,14 +262,21 @@ export class SSHTerminal {
       if (rejectFn) rejectFn(new Error('WebSocket connection failed'));
     };
 
+    // User input goes through trzsz filter
     this.disposables.push(
       this.terminal.onData((data) => {
-        if (this.ws?.readyState === WebSocket.OPEN) {
-          this.ws.send(data);
-        }
+        this.trzszFilter!.processTerminalInput(data);
       })
     );
 
+    // Binary input support
+    this.disposables.push(
+      this.terminal.onBinary((data) => {
+        this.trzszFilter!.processBinaryInput(data);
+      })
+    );
+
+    // Terminal resize: send to server + update trzsz column count
     this.disposables.push(
       this.terminal.onResize(({ cols, rows }) => {
         if (this.ws?.readyState === WebSocket.OPEN) {
@@ -253,6 +286,7 @@ export class SSHTerminal {
             rows,
           }));
         }
+        this.trzszFilter?.setTerminalColumns(cols);
       })
     );
   }
@@ -308,6 +342,7 @@ export class SSHTerminal {
     this.reconnectAttempts = this.maxReconnectAttempts;
     this.ws?.close(1000);
     this.ws = null;
+    this.trzszFilter = null;
     this.disposables.forEach(d => d.dispose());
     this.disposables = [];
     this.lastConfig = null;
