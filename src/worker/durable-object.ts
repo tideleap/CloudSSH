@@ -71,7 +71,7 @@ export class SSHSessionDO {
         return new Response('Invalid request body', { status: 400 });
       }
     } else {
-      const configParam = url.searchParams.get('config');
+      const configParam = request.headers.get('x-ssh-config') || url.searchParams.get('config');
       if (configParam) {
         try {
           prefilledConfig = JSON.parse(decodeURIComponent(configParam)) as SSHConnectionConfig;
@@ -217,6 +217,7 @@ export class SSHSessionDO {
   }
 
   async webSocketError(ws: WebSocket, error: unknown): Promise<void> {
+    console.error('WebSocket error:', error);
     await this.webSocketClose(ws, 1011, 'Error', false);
   }
 

@@ -17,6 +17,7 @@ export class UserDBDO {
   // one-time-token 内存存储：token → { config, expiresAt }
   private connectTokens: Map<string, { config: SSHConnectionConfig; expiresAt: number }> = new Map();
   private static readonly MAX_CONNECT_TOKENS = 1000;
+  private derivedKeyCache: Map<number, CryptoKey> = new Map();
 
   constructor(state: DurableObjectState, env: Env) {
     this.state = state;
@@ -136,9 +137,11 @@ export class UserDBDO {
 
       // --- 服务器 CRUD ---
       if (path === '/internal/servers' && request.method === 'GET') {
-        const userId = url.searchParams.get('user_id');
-        if (!userId) return Response.json({ error: 'Missing user_id' }, { status: 400 });
-        return this.handleGetServers(parseInt(userId));
+        const userIdStr = url.searchParams.get('user_id');
+        if (!userIdStr) return Response.json({ error: 'Missing user_id' }, { status: 400 });
+        const userId = parseInt(userIdStr);
+        if (isNaN(userId)) return Response.json({ error: 'Invalid user_id' }, { status: 400 });
+        return this.handleGetServers(userId);
       }
       if (path === '/internal/servers' && request.method === 'POST') {
         return this.handleAddServer(request);
@@ -165,9 +168,11 @@ export class UserDBDO {
 
       // --- 用户自定义主题 ---
       if (path === '/internal/theme' && request.method === 'GET') {
-        const userId = url.searchParams.get('user_id');
-        if (!userId) return Response.json({ error: 'Missing user_id' }, { status: 400 });
-        return this.handleGetTheme(parseInt(userId));
+        const userIdStr = url.searchParams.get('user_id');
+        if (!userIdStr) return Response.json({ error: 'Missing user_id' }, { status: 400 });
+        const userId = parseInt(userIdStr);
+        if (isNaN(userId)) return Response.json({ error: 'Invalid user_id' }, { status: 400 });
+        return this.handleGetTheme(userId);
       }
       if (path === '/internal/theme' && request.method === 'PUT') {
         return this.handlePutTheme(request);
@@ -180,9 +185,11 @@ export class UserDBDO {
 
       // --- known_hosts 管理 ---
       if (path === '/internal/known-hosts' && request.method === 'GET') {
-        const userId = url.searchParams.get('user_id');
-        if (!userId) return Response.json({ error: 'Missing user_id' }, { status: 400 });
-        return this.handleGetKnownHosts(parseInt(userId), url.searchParams.get('host'), url.searchParams.get('port'));
+        const userIdStr = url.searchParams.get('user_id');
+        if (!userIdStr) return Response.json({ error: 'Missing user_id' }, { status: 400 });
+        const userId = parseInt(userIdStr);
+        if (isNaN(userId)) return Response.json({ error: 'Invalid user_id' }, { status: 400 });
+        return this.handleGetKnownHosts(userId, url.searchParams.get('host'), url.searchParams.get('port'));
       }
       if (path === '/internal/known-hosts' && request.method === 'POST') {
         return this.handleUpsertKnownHost(request);
@@ -193,17 +200,21 @@ export class UserDBDO {
 
       // --- AI 配置管理 ---
       if (path === '/internal/ai-config' && request.method === 'GET') {
-        const userId = url.searchParams.get('user_id');
-        if (!userId) return Response.json({ error: 'Missing user_id' }, { status: 400 });
-        return this.handleGetAIConfig(parseInt(userId));
+        const userIdStr = url.searchParams.get('user_id');
+        if (!userIdStr) return Response.json({ error: 'Missing user_id' }, { status: 400 });
+        const userId = parseInt(userIdStr);
+        if (isNaN(userId)) return Response.json({ error: 'Invalid user_id' }, { status: 400 });
+        return this.handleGetAIConfig(userId);
       }
       if (path === '/internal/ai-config' && request.method === 'PUT') {
         return this.handlePutAIConfig(request);
       }
       if (path === '/internal/ai-config/decrypt' && request.method === 'GET') {
-        const userId = url.searchParams.get('user_id');
-        if (!userId) return Response.json({ error: 'Missing user_id' }, { status: 400 });
-        return this.handleGetAIConfigDecrypted(parseInt(userId));
+        const userIdStr = url.searchParams.get('user_id');
+        if (!userIdStr) return Response.json({ error: 'Missing user_id' }, { status: 400 });
+        const userId = parseInt(userIdStr);
+        if (isNaN(userId)) return Response.json({ error: 'Invalid user_id' }, { status: 400 });
+        return this.handleGetAIConfigDecrypted(userId);
       }
 
       return Response.json({ error: 'Not Found' }, { status: 404 });
@@ -625,6 +636,9 @@ export class UserDBDO {
   private encryptionSecret: string | null = null;
 
   private async deriveEncryptionKey(userId: number): Promise<CryptoKey> {
+    const cached = this.derivedKeyCache.get(userId);
+    if (cached) return cached;
+
     if (!this.encryptionSecret) {
       const rows = this.db.exec("SELECT value FROM system_config WHERE key = 'encryption_secret'").toArray();
       if (rows.length > 0) {
@@ -653,13 +667,16 @@ export class UserDBDO {
       ['deriveKey']
     );
 
-    return crypto.subtle.deriveKey(
+    const derived = await crypto.subtle.deriveKey(
       { name: 'PBKDF2', salt, iterations: 100000, hash: 'SHA-256' },
       keyMaterial,
       { name: 'AES-GCM', length: 256 },
       false,
       ['encrypt', 'decrypt']
     );
+
+    this.derivedKeyCache.set(userId, derived);
+    return derived;
   }
 
   // ==================== 速率限制 ====================

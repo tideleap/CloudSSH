@@ -265,7 +265,7 @@ export default {
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       console.error('Unhandled error in fetch handler:', msg);
-      return Response.json({ error: msg }, { status: 500 });
+      return Response.json({ error: 'Internal Server Error' }, { status: 500 });
     }
   },
 };
@@ -312,8 +312,7 @@ async function handleServersRoute(request: Request, url: URL, env: Env): Promise
     if (!tokenRes.ok) return tokenRes;
 
     const { token } = await tokenRes.json<{ token: string }>();
-    const wsProtocol = url.protocol === 'https:' ? 'wss:' : 'ws:';
-    const wsUrl = `${wsProtocol}//${url.host}/api/ssh?token=${token}`;
+    const wsUrl = `wss://${url.host}/api/ssh?token=${token}`;
 
     return Response.json({ wsUrl });
   }
@@ -600,11 +599,11 @@ async function handleTokenSSHConnection(request: Request, env: Env, token: strin
 
   const doUrl = new URL(request.url);
   doUrl.searchParams.delete('token');
-  doUrl.searchParams.set('config', encodeURIComponent(JSON.stringify(config)));
   doUrl.searchParams.set('session', sessionName);
 
   const headers = new Headers(request.headers);
   headers.set('x-cloudflare-colo', (request as any).cf?.colo || 'UNKNOWN');
+  headers.set('x-ssh-config', encodeURIComponent(JSON.stringify(config)));
 
   const doRequest = new Request(doUrl.toString(), {
     headers: headers,
